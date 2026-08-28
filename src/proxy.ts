@@ -1,5 +1,12 @@
-import { auth } from "@/lib/auth";
+import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
+import authConfig from "@/lib/auth.config";
+
+// Instancia liviana de NextAuth propia del middleware: usa authConfig
+// (sin Prisma ni bcrypt) para que el motor nativo de Prisma no termine
+// empaquetado en el bundle del middleware — Netlify no permite C++
+// addons ahí (ver src/lib/auth.config.ts).
+const { auth } = NextAuth(authConfig);
 
 // Rutas exclusivas del Administrador (dashboard de cartera, log de
 // auditoría, gestión de cobradores). Todo lo demás autenticado es
