@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lumen
+      POSTGRES_PASSWORD: lumen
+      POSTGRES_DB: lumen
+    ports:
+      - "5432:5432"
+    volumes:
+      - lumen_db_data:/var/lib/postgresql/data
+
+volumes:
+  lumen_db_data:
