@@ -41,7 +41,12 @@ export default async function LoanDetailPage({
         <Link href={`/clientes/${loan.clientId}`} className="text-sm text-emerald-700 hover:underline">
           {loan.client.firstName} {loan.client.lastName}
         </Link>
-        <h1 className="text-xl font-bold text-slate-900">{formatCurrency(Number(loan.principalAmount))}</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-bold text-slate-900">{formatCurrency(Number(loan.principalAmount))}</h1>
+          <Badge variant={loan.loanType === "INTERES_SOBRE_SALDO" ? "info" : "default"}>
+            {loan.loanType === "INTERES_SOBRE_SALDO" ? "Interés sobre saldo" : "Cuota fija"}
+          </Badge>
+        </div>
         <p className="text-sm text-slate-500">
           Cobrador: {loan.assignedCollector.name} · Inicio: {formatDate(loan.startDate)}
         </p>
@@ -49,10 +54,19 @@ export default async function LoanDetailPage({
 
       <Card>
         <CardContent className="grid grid-cols-2 gap-4 pt-4 text-sm">
-          <div>
-            <p className="text-slate-500">Total a pagar</p>
-            <p className="font-semibold text-slate-900">{formatCurrency(totalDue)}</p>
-          </div>
+          {loan.loanType === "INTERES_SOBRE_SALDO" ? (
+            <div>
+              <p className="text-slate-500">Capital pendiente</p>
+              <p className="font-semibold text-slate-900">
+                {formatCurrency(Number(loan.outstandingPrincipal ?? 0))}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-slate-500">Total a pagar</p>
+              <p className="font-semibold text-slate-900">{formatCurrency(totalDue)}</p>
+            </div>
+          )}
           <div>
             <p className="text-slate-500">Pagado</p>
             <p className="font-semibold text-emerald-700">{formatCurrency(totalPaid)}</p>

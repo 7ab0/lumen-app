@@ -77,11 +77,16 @@ export async function registrarPago(input: RegistrarPagoInput) {
       },
     });
 
-    const pendientes = await tx.installment.count({
-      where: { loanId: installment.loanId, status: { not: "PAGADA" } },
-    });
-    if (pendientes === 0) {
-      await tx.loan.update({ where: { id: installment.loanId }, data: { status: "PAGADO" } });
+    // En INTERES_SOBRE_SALDO las cuotas son solo interés y no amortizan
+    // capital: que todas estén pagadas no significa que el préstamo esté
+    // saldado. Ese cierre solo ocurre vía cancelarPrestamo.
+    if (installment.loan.loanType === "CUOTA_FIJA") {
+      const pendientes = await tx.installment.count({
+        where: { loanId: installment.loanId, status: { not: "PAGADA" } },
+      });
+      if (pendientes === 0) {
+        await tx.loan.update({ where: { id: installment.loanId }, data: { status: "PAGADO" } });
+      }
     }
   });
 
@@ -92,4 +97,87 @@ export async function registrarPago(input: RegistrarPagoInput) {
   revalidatePath(`/prestamos/${installment.loanId}`);
 
   return { ok: true, duplicate: false };
+}
+
+const cancelarPrestamoSchema = z.object({
+  installmentId: z.string(),
+  method: z.enum(["EFECTIVO", "TRANSFERENCIA", "OTRO"]).default("EFECTIVO"),
+  notes: z.string().optional(),
+});
+
+export type CancelarPrestamoInput = z.infer<typeof cancelarPrestamoSchema>;
+
+// Cierre de un préstamo de INTERES_SOBRE_SALDO: el cliente paga de una
+// vez el capital pendiente más el interés no pagado de la cuota actual,
+// en lugar de seguir pagando solo interés mes a mes. Solo disponible en
+// línea (no se ofrece en el flujo offline de la PWA).
+export async function cancelarPrestamo(input: CancelarPrestamoInput) {
+  const session = await auth();
+  if (!session?.user) throw new Error("No autenticado");
+
+  const data = cancelarPrestamoSchema.parse(input);
+
+  const installment = await prisma.installment.findUniqueOrThrow({
+    where: { id: data.installmentId },
+    include: { loan: true },
+  });
+
+  if (installment.loan.loanType !== "INTERES_SOBRE_SALDO") {
+    throw new Error("La cancelación total solo aplica a préstamos de interés sobre saldo");
+  }
+
+  const outstandingPrincipal = Number(installment.loan.outstandingPrincipal ?? 0);
+  const interesPendiente = Number(installment.amountDue) - Number(installment.amountPaid);
+  const montoTotal = Math.round((outstandingPrincipal + interesPendiente) * 100) / 100;
+
+  await prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.create({
+      data: {
+        installmentId: installment.id,
+        loanId: installment.loanId,
+        amount: montoTotal,
+        method: data.method,
+        notes: data.notes ? `Cancelación total. ${data.notes}` : "Cancelación total",
+        registeredById: session.user.id,
+      },
+    });
+
+    await tx.installment.update({
+      where: { id: installment.id },
+      data: { amountPaid: installment.amountDue, status: "PAGADA" },
+    });
+
+    // Las cuotas de interés que aún no vencían dejan de tener sentido:
+    // la cancelación total salda el capital y cierra el préstamo.
+    await tx.installment.deleteMany({
+      where: {
+        loanId: installment.loanId,
+        number: { gt: installment.number },
+        status: { in: ["PENDIENTE", "ATRASADA"] },
+      },
+    });
+
+    await tx.loan.update({
+      where: { id: installment.loanId },
+      data: { status: "PAGADO", outstandingPrincipal: 0 },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        userId: session.user.id,
+        action: "CREATE",
+        entityType: "Payment",
+        entityId: payment.id,
+        afterData: { installmentId: installment.id, amount: montoTotal, tipo: "cancelacion_total" },
+      },
+    });
+  });
+
+  await recalcularScore(installment.loan.clientId);
+
+  revalidatePath("/");
+  revalidatePath(`/clientes/${installment.loan.clientId}`);
+  revalidatePath(`/prestamos/${installment.loanId}`);
+
+  return { ok: true };
 }

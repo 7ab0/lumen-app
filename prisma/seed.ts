@@ -1,7 +1,7 @@
 import { PrismaClient, PaymentFrequency } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { addDays, subDays } from "date-fns";
-import { buildInstallmentPlan } from "../src/lib/amortization";
+import { buildInstallmentPlan, buildInterestOnlyPlan } from "../src/lib/amortization";
 import { recalcularScore } from "../src/lib/score";
 
 // Datos de ejemplo para desarrollo local, en reemplazo del
@@ -64,25 +64,49 @@ async function main() {
     clients.push(client);
   }
 
+  const clientIds = clients.map((c) => c.id);
+
+  // Reset de los préstamos (y su cascada: cuotas, pagos, mensajes,
+  // adjuntos) de estos clientes de ejemplo antes de re-sembrar. A
+  // diferencia de usuarios/clientes, que usan upsert, los préstamos se
+  // recrean siempre — sin este borrado previo, correr el seed más de
+  // una vez duplica los 7 préstamos de ejemplo.
+  await prisma.attachment.deleteMany({
+    where: {
+      OR: [{ loan: { clientId: { in: clientIds } } }, { payment: { loan: { clientId: { in: clientIds } } } }],
+    },
+  });
+  await prisma.payment.deleteMany({ where: { loan: { clientId: { in: clientIds } } } });
+  await prisma.messageLog.deleteMany({
+    where: {
+      OR: [{ loan: { clientId: { in: clientIds } } }, { installment: { loan: { clientId: { in: clientIds } } } }],
+    },
+  });
+  await prisma.loan.deleteMany({ where: { clientId: { in: clientIds } } });
+
   // 7 préstamos repartidos entre los 6 clientes (uno tiene 2), con
   // fechas de inicio variadas para que algunas cuotas ya estén
   // atrasadas y otras próximas a vencer (para poder ver la agenda
   // diaria con datos realistas apenas se levanta el proyecto).
+  // 5 de interés sobre saldo (capital fijo, solo interés mensual) y 2
+  // de cuota fija (el método original), para ver ambos tipos convivir
+  // en la agenda diaria apenas se levanta el proyecto.
   const loanSeeds = [
-    { client: clients[0], principal: 500, rate: 8, term: 3, freq: "MENSUAL" as const, startOffsetDays: -70 },
-    { client: clients[1], principal: 800, rate: 6, term: 4, freq: "MENSUAL" as const, startOffsetDays: -40 },
-    { client: clients[2], principal: 300, rate: 10, term: 6, freq: "SEMANAL" as const, startOffsetDays: -30 },
-    { client: clients[3], principal: 1200, rate: 5, term: 6, freq: "MENSUAL" as const, startOffsetDays: -10 },
-    { client: clients[4], principal: 400, rate: 8, term: 4, freq: "QUINCENAL" as const, startOffsetDays: -20 },
-    { client: clients[5], principal: 600, rate: 7, term: 3, freq: "MENSUAL" as const, startOffsetDays: -5 },
-    { client: clients[0], principal: 250, rate: 9, term: 4, freq: "SEMANAL" as const, startOffsetDays: -15 },
+    { client: clients[0], principal: 500, rate: 8, term: 3, freq: "MENSUAL" as const, startOffsetDays: -70, loanType: "INTERES_SOBRE_SALDO" as const },
+    { client: clients[1], principal: 800, rate: 6, term: 4, freq: "MENSUAL" as const, startOffsetDays: -40, loanType: "INTERES_SOBRE_SALDO" as const },
+    { client: clients[2], principal: 300, rate: 10, term: 6, freq: "SEMANAL" as const, startOffsetDays: -30, loanType: "INTERES_SOBRE_SALDO" as const },
+    { client: clients[3], principal: 1200, rate: 5, term: 6, freq: "MENSUAL" as const, startOffsetDays: -10, loanType: "INTERES_SOBRE_SALDO" as const },
+    { client: clients[4], principal: 400, rate: 8, term: 4, freq: "QUINCENAL" as const, startOffsetDays: -20, loanType: "CUOTA_FIJA" as const },
+    { client: clients[5], principal: 600, rate: 7, term: 3, freq: "MENSUAL" as const, startOffsetDays: -5, loanType: "INTERES_SOBRE_SALDO" as const },
+    { client: clients[0], principal: 250, rate: 9, term: 4, freq: "SEMANAL" as const, startOffsetDays: -15, loanType: "CUOTA_FIJA" as const },
   ];
 
   let totalPayments = 0;
 
   for (const seed of loanSeeds) {
     const startDate = addDays(new Date(), seed.startOffsetDays);
-    const plan = buildInstallmentPlan({
+    const buildPlan = seed.loanType === "INTERES_SOBRE_SALDO" ? buildInterestOnlyPlan : buildInstallmentPlan;
+    const plan = buildPlan({
       principal: seed.principal,
       interestRatePercentPerPeriod: seed.rate,
       termMonths: seed.term,
@@ -97,6 +121,8 @@ async function main() {
         interestRate: seed.rate,
         termMonths: seed.term,
         paymentFrequency: seed.freq as PaymentFrequency,
+        loanType: seed.loanType,
+        outstandingPrincipal: seed.loanType === "INTERES_SOBRE_SALDO" ? seed.principal : null,
         startDate,
         assignedCollectorId: cobrador.id,
         createdById: admin.id,

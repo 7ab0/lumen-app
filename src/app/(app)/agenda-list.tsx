@@ -67,6 +67,8 @@ function AgendaRowCard({ row }: { row: AgendaRow }) {
           installmentId={row.installmentId}
           clientName={row.clientName}
           saldoPendiente={saldoPendiente}
+          loanType={row.loanType}
+          outstandingPrincipal={row.outstandingPrincipal}
           onClose={() => setShowPayment(false)}
         />
       )}

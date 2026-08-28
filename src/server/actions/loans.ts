@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { buildInstallmentPlan } from "@/lib/amortization";
+import { buildInstallmentPlan, buildInterestOnlyPlan } from "@/lib/amortization";
 
 const crearPrestamoSchema = z.object({
   clientId: z.string(),
@@ -13,6 +13,7 @@ const crearPrestamoSchema = z.object({
   interestRate: z.coerce.number().min(0),
   termMonths: z.coerce.number().int().positive(),
   paymentFrequency: z.enum(["SEMANAL", "QUINCENAL", "MENSUAL"]),
+  loanType: z.enum(["CUOTA_FIJA", "INTERES_SOBRE_SALDO"]).default("CUOTA_FIJA"),
   startDate: z.coerce.date(),
   assignedCollectorId: z.string(),
 });
@@ -25,7 +26,8 @@ export async function crearPrestamo(input: z.infer<typeof crearPrestamoSchema>) 
   if (!session?.user) throw new Error("No autenticado");
   const data = crearPrestamoSchema.parse(input);
 
-  const plan = buildInstallmentPlan({
+  const buildPlan = data.loanType === "INTERES_SOBRE_SALDO" ? buildInterestOnlyPlan : buildInstallmentPlan;
+  const plan = buildPlan({
     principal: data.principalAmount,
     interestRatePercentPerPeriod: data.interestRate,
     termMonths: data.termMonths,
@@ -40,6 +42,8 @@ export async function crearPrestamo(input: z.infer<typeof crearPrestamoSchema>) 
       interestRate: data.interestRate,
       termMonths: data.termMonths,
       paymentFrequency: data.paymentFrequency,
+      loanType: data.loanType,
+      outstandingPrincipal: data.loanType === "INTERES_SOBRE_SALDO" ? data.principalAmount : null,
       startDate: data.startDate,
       assignedCollectorId: data.assignedCollectorId,
       createdById: session.user.id,

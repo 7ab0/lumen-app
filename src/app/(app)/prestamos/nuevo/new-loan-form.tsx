@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { crearPrestamo } from "@/server/actions/loans";
-import { buildInstallmentPlan } from "@/lib/amortization";
+import { buildInstallmentPlan, buildInterestOnlyPlan } from "@/lib/amortization";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 type Client = { id: string; firstName: string; lastName: string; documentId: string };
@@ -22,6 +22,7 @@ export function NewLoanForm({
   defaultClientId?: string;
 }) {
   const [clientId, setClientId] = useState(defaultClientId || "");
+  const [loanType, setLoanType] = useState<"CUOTA_FIJA" | "INTERES_SOBRE_SALDO">("CUOTA_FIJA");
   const [principalAmount, setPrincipalAmount] = useState("");
   const [interestRate, setInterestRate] = useState("5");
   const [termMonths, setTermMonths] = useState("3");
@@ -36,8 +37,9 @@ export function NewLoanForm({
   const preview = useMemo(() => {
     const principal = Number(principalAmount);
     if (!principal || principal <= 0) return null;
+    const buildPlan = loanType === "INTERES_SOBRE_SALDO" ? buildInterestOnlyPlan : buildInstallmentPlan;
     try {
-      return buildInstallmentPlan({
+      return buildPlan({
         principal,
         interestRatePercentPerPeriod: Number(interestRate) || 0,
         termMonths: Number(termMonths) || 1,
@@ -47,7 +49,7 @@ export function NewLoanForm({
     } catch {
       return null;
     }
-  }, [principalAmount, interestRate, termMonths, paymentFrequency, startDate]);
+  }, [loanType, principalAmount, interestRate, termMonths, paymentFrequency, startDate]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -64,6 +66,7 @@ export function NewLoanForm({
         interestRate: Number(interestRate),
         termMonths: Number(termMonths),
         paymentFrequency,
+        loanType,
         startDate: new Date(startDate),
         assignedCollectorId,
       });
@@ -95,6 +98,19 @@ export function NewLoanForm({
                     {c.firstName} {c.lastName} ({c.documentId})
                   </option>
                 ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="loanType">Tipo de préstamo</Label>
+              <select
+                id="loanType"
+                value={loanType}
+                onChange={(e) => setLoanType(e.target.value as typeof loanType)}
+                className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm"
+              >
+                <option value="CUOTA_FIJA">Cuota fija (capital + interés en cuotas iguales)</option>
+                <option value="INTERES_SOBRE_SALDO">Interés sobre saldo (capital fijo, solo interés)</option>
               </select>
             </div>
 

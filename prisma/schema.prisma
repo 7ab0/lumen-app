@@ -133,6 +133,18 @@ enum LoanStatus {
   REFINANCIADO
 }
 
+enum LoanType {
+  // Método original: capital + interés total repartidos en cuotas
+  // iguales (ver lib/amortization.ts, buildInstallmentPlan).
+  CUOTA_FIJA
+  // Capital fijo durante toda la vida del préstamo: cada cuota es solo
+  // el interés del periodo sobre el capital pendiente. El cliente paga
+  // el interés y sigue, o cancela todo (capital pendiente + interés del
+  // periodo) y el préstamo se cierra (ver server/actions/payments.ts,
+  // cancelarPrestamo).
+  INTERES_SOBRE_SALDO
+}
+
 model Loan {
   id                   String           @id @default(cuid())
   clientId             String
@@ -141,6 +153,11 @@ model Loan {
   interestRate         Decimal          @db.Decimal(6, 3) // % por periodo de pago
   termMonths           Int
   paymentFrequency     PaymentFrequency @default(MENSUAL)
+  loanType             LoanType         @default(CUOTA_FIJA)
+  // Solo se usa con INTERES_SOBRE_SALDO: capital vivo, no amortiza con
+  // los pagos de interés mensuales, solo baja a 0 al cancelar el
+  // préstamo. Null en préstamos de CUOTA_FIJA.
+  outstandingPrincipal Decimal?         @db.Decimal(12, 2)
   startDate            DateTime
   status               LoanStatus       @default(ACTIVO)
 
@@ -155,6 +172,7 @@ model Loan {
   createdAt            DateTime         @default(now())
 
   installments Installment[]
+  payments     Payment[]
   attachments  Attachment[]
   messageLogs  MessageLog[]
 

@@ -14,6 +14,8 @@ export type AgendaRow = {
   status: "PENDIENTE" | "PAGADA" | "PARCIAL" | "ATRASADA";
   daysLate: number; // > 0 = atrasada, 0 = hoy, < 0 = recordatorio (próxima)
   bucket: "atrasada" | "hoy" | "recordatorio";
+  loanType: "CUOTA_FIJA" | "INTERES_SOBRE_SALDO";
+  outstandingPrincipal: number | null;
 };
 
 // Trae las cuotas que vencen hoy, las atrasadas de días anteriores
@@ -55,6 +57,8 @@ export async function getAgenda({
       status: i.status,
       daysLate,
       bucket,
+      loanType: i.loan.loanType,
+      outstandingPrincipal: i.loan.outstandingPrincipal ? Number(i.loan.outstandingPrincipal) : null,
     };
   });
 
