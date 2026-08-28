@@ -11,6 +11,11 @@ const LOCK_DURATION_MINUTES = 15;
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
+  // Recomendación oficial de Auth.js fuera de Vercel: sin esto, NextAuth
+  // no confía en el host real de la request y puede construir URLs de
+  // callback con el host equivocado (ver AUTH_TRUST_HOST /
+  // https://authjs.dev/reference/nextjs#trusthost).
+  trustHost: true,
   providers: [
     Credentials({
       name: "credentials",
