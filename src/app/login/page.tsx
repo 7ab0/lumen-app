@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { LoginForm } from "./login-form";
 
 export default function LoginPage() {
@@ -10,7 +11,9 @@ export default function LoginPage() {
             Ingresa con tu correo y contraseña
           </p>
         </div>
-        <LoginForm />
+        <Suspense>
+          <LoginForm />
+        </Suspense>
       </div>
     </div>
   );
