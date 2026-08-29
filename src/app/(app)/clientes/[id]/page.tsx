@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ScoreBadge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { CompleteProfileForm } from "./complete-profile-form";
+import { AttachmentsPanel } from "@/components/attachments-panel";
 import { Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export default async function ClientDetailPage({
       guarantors: true,
       referredBy: true,
       loans: { include: { installments: true }, orderBy: { createdAt: "desc" } },
+      attachments: { include: { uploadedBy: true }, orderBy: { uploadedAt: "desc" } },
     },
   });
 
@@ -80,6 +82,27 @@ export default async function ClientDetailPage({
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Documentos</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AttachmentsPanel
+            relatedType="CLIENT"
+            relatedId={client.id}
+            clientId={client.id}
+            availableTypes={["DNI", "OTRO"]}
+            attachments={client.attachments.map((a) => ({
+              id: a.id,
+              type: a.type,
+              fileUrl: a.fileUrl,
+              uploadedAt: a.uploadedAt,
+              uploadedByName: a.uploadedBy.name,
+            }))}
+          />
+        </CardContent>
+      </Card>
 
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-slate-900">Préstamos</h2>

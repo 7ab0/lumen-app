@@ -91,3 +91,70 @@ function nextDueDate(startDate: Date, frequency: PaymentFrequency, periodNumber:
   if (frequency === "QUINCENAL") return addDays(startDate, periodNumber * 15);
   return addMonths(startDate, periodNumber);
 }
+
+export function siguienteFechaPeriodo(base: Date, frequency: PaymentFrequency): Date {
+  if (frequency === "SEMANAL") return addDays(base, 7);
+  if (frequency === "QUINCENAL") return addDays(base, 15);
+  return addMonths(base, 1);
+}
+
+export function calcularInteresPeriodo(outstandingPrincipal: number, interestRatePercentPerPeriod: number): number {
+  return Math.round(outstandingPrincipal * (interestRatePercentPerPeriod / 100) * 100) / 100;
+}
+
+export type CuotaInteresSolo = {
+  number: number;
+  dueDate: Date;
+  amountDue: number;
+};
+
+export function primeraCuotaInteresSolo({
+  principal,
+  interestRatePercentPerPeriod,
+  frequency,
+  startDate,
+}: {
+  principal: number;
+  interestRatePercentPerPeriod: number;
+  frequency: PaymentFrequency;
+  startDate: Date;
+}): CuotaInteresSolo {
+  return {
+    number: 1,
+    dueDate: siguienteFechaPeriodo(startDate, frequency),
+    amountDue: calcularInteresPeriodo(principal, interestRatePercentPerPeriod),
+  };
+}
+
+export function siguienteCuotaInteresSolo({
+  outstandingPrincipal,
+  interestRatePercentPerPeriod,
+  frequency,
+  prevDueDate,
+  prevNumber,
+}: {
+  outstandingPrincipal: number;
+  interestRatePercentPerPeriod: number;
+  frequency: PaymentFrequency;
+  prevDueDate: Date;
+  prevNumber: number;
+}): CuotaInteresSolo {
+  return {
+    number: prevNumber + 1,
+    dueDate: siguienteFechaPeriodo(prevDueDate, frequency),
+    amountDue: calcularInteresPeriodo(outstandingPrincipal, interestRatePercentPerPeriod),
+  };
+}
+
+export function plazoPactadoVencido({
+  startDate,
+  termMonths,
+  now,
+}: {
+  startDate: Date;
+  termMonths: number;
+  now: Date;
+}): { vencido: boolean; fechaFinPactada: Date } {
+  const fechaFinPactada = addMonths(startDate, termMonths);
+  return { vencido: now > fechaFinPactada, fechaFinPactada };
+}

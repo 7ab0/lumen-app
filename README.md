@@ -17,25 +17,34 @@ archivo `lumen-datos-ejemplo.xlsx` originales. Lo que ya está implementado:
 - Layout mobile-first (barra inferior en celular, sidebar en laptop).
 - Agenda diaria de cobros con WhatsApp (`wa.me`) y registro de pago.
 - Alta de cliente en dos pasos (rápida + completar perfil).
-- Creación de préstamos con generación automática de cuotas (interés
-  simple/flat).
+- Dos tipos de préstamo (28 de agosto de 2026, ver plan sección "2.0"):
+  **interés sobre saldo** (el más usado: el capital queda fijo y cada
+  periodo el cliente paga solo el interés o cancela todo; también admite
+  abono parcial de capital) y **cuota fija** (el método clásico: tabla
+  de cuotas generada de una sola vez, con interés simple/flat).
 - Dashboard básico de cartera + reporte diario descargable en Excel.
 - Job de mora (`/api/jobs/mora`, programado en `vercel.json`).
 - PWA instalable con cola de pagos offline (IndexedDB, sincroniza sola).
 - Seed de datos de ejemplo (reemplaza el xlsx perdido).
+- Documentos adjuntos (29 de agosto de 2026): subida real de archivos
+  (DNI, comprobantes, contrato) a Vercel Blob desde la ficha del cliente
+  y del préstamo — requiere `BLOB_READ_WRITE_TOKEN` configurado.
+- Contrato de préstamo en PDF descargable (29 de agosto de 2026), desde
+  el detalle del préstamo — es una plantilla de trabajo, pendiente de
+  revisión legal antes de usarla formalmente (ver plan, punto 8).
+- Pruebas unitarias (Vitest) de amortización, score y plantillas de
+  WhatsApp — `pnpm test`.
 
 Lo que queda pendiente para completar el MVP del plan (ver también la
 sección "Próximos pasos" del documento de plan):
 
-- Documentos adjuntos: por ahora el modelo de datos está listo
-  (`Attachment`), pero falta conectar la subida real de archivos (DNI,
-  comprobantes) a Vercel Blob o S3.
-- Contrato de préstamo en PDF descargable (`@react-pdf/renderer` ya está
-  instalado, falta la plantilla y el botón de descarga).
+- Probar la subida de adjuntos con un `BLOB_READ_WRITE_TOKEN` real (acá
+  solo se verificó el código, sin una cuenta de Vercel Blob a mano).
 - Backups automáticos y monitoreo de errores (Sentry): se configuran en
   el proveedor de base de datos y en Vercel al desplegar, no requieren
   código adicional en este repo.
-- Pruebas unitarias (Vitest) para amortización, mora y score.
+- Más pruebas: job de mora, agenda diaria, y un checklist de pruebas
+  manuales end-to-end de los flujos completos en pantalla.
 - Mejoras evaluadas y diferidas: firma digital del contrato,
   geolocalización al registrar un pago, tasas configurables por tipo de
   préstamo.
@@ -70,7 +79,8 @@ pnpm dev
 Abre `http://localhost:3000`. Usuarios de prueba (creados por el seed):
 
 - **Admin:** `admin@lumen.pe` / `lumen1234`
-- **Cobrador:** `cobrador@lumen.pe` / `lumen1234`
+- **Cobradora (Lummen):** `lummen@lumen.pe` / `lumen1234`
+- **Soporte (Gustavo, con todos los privilegios — rol ADMIN):** `soporte@lumen.pe` / `lumen1234`
 
 > Nota: la generación del cliente de Prisma (`prisma generate` /
 > `migrate`) descarga binarios desde `binaries.prisma.sh`. Si tu red

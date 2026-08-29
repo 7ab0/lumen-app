@@ -14,6 +14,8 @@ Este documento cubre las cuatro etapas: planeamiento, funcionamiento, creación/
 - **Stack:** Next.js (App Router) + TypeScript + PostgreSQL.
 - **Usuarios:** multiusuario con roles — Administrador (dueño) y Cobrador/Asesor (gestionan clientes/cobros asignados).
 - **Despliegue:** Vercel + base de datos en la nube.
+- **Repositorio:** https://github.com/7ab0/lumen-app (subido el 28 de agosto de 2026, rama `main`).
+- **Base de datos:** Neon (Postgres serverless), tanto para desarrollo como para producción — se descartó Docker local (la laptop de trabajo no tiene virtualización de hardware habilitada) y se descartó Supabase (sus extras de auth/storage/realtime no se usan, ya que Lumen usa Auth.js y Vercel Blob por separado; además el plan gratis de Supabase pausa proyectos inactivos tras una semana, mientras que Neon solo "duerme" el cómputo y despierta solo al conectar). Ver detalle de costos en la sección 1.2sexies.
 - **Diseño:** mobile-first, instalable como PWA (ver 1.2quinquies) — el cobrador opera principalmente desde el celular en campo, el administrador desde laptop para dashboard y reportes.
 
 ### 1.2 Alcance del MVP
@@ -53,6 +55,16 @@ Tras revisar el plan, se decidió incorporar al MVP (antes de pasar a producció
 - **Mobile-first + PWA con modo offline:** la interfaz es una sola app web responsive (Next.js + Tailwind) que se adapta a celular y laptop, sin apps nativas separadas. Se instala como PWA en el celular del cobrador. Los pagos registrados sin señal se guardan localmente (IndexedDB / service worker) y se sincronizan automáticamente al recuperar conexión, para no perder cobros en campo por señal irregular.
 - **Alta de cliente en dos pasos:** desde el celular, el alta rápida solo pide nombre, DNI y teléfono (lo mínimo para no perder tiempo frente al cliente); el resto de los datos (dirección, ingresos declarados, aval, foto de DNI, quién lo refirió) se completa después desde la ficha del cliente, ya sea en el celular o en laptop. Los campos correspondientes en el modelo de datos (sección 1.5) ya son opcionales, por lo que no requiere cambios de esquema — es una decisión de flujo/UI.
 
+### 1.2sexies Base de datos: Neon vs. Docker local vs. Supabase (28 de agosto de 2026)
+
+Al intentar levantar Postgres local con Docker en la laptop de trabajo, Docker Desktop falló por falta de soporte de virtualización de hardware. En vez de resolverlo a nivel de BIOS/IT, se evaluó usar directamente una base de datos Postgres en la nube (que de todas formas ya estaba planeada para producción):
+
+- **Docker Desktop:** gratis para uso individual (plan Personal, sin límite de tiempo); solo tiene costo si una empresa necesita varios usuarios con el plan Team ($15-16/usuario/mes). No es el problema de costos — el problema fue técnico (virtualización).
+- **Neon (elegido):** plan gratis con 0.5 GB de almacenamiento y 100 horas de cómputo por mes por proyecto, hasta 100 proyectos. Al superar el límite gratis, pausa el cómputo (no cobra automático); el siguiente plan es pago por uso sin mínimo mensual (~US$0.106/hora de cómputo, ~US$0.35/GB de almacenamiento al mes).
+- **Supabase (descartado):** plan gratis más limitado para este caso — solo 2 proyectos gratis y los proyectos inactivos se pausan a la semana (hay que reactivarlos a mano). Además incluye auth, storage y APIs en tiempo real que Lumen no usa (ya tiene Auth.js y Vercel Blob), así que no aporta valor extra sobre Neon para este proyecto. Su siguiente plan pago es $25/mes fijo.
+
+Decisión: usar Neon tanto en desarrollo como en producción, sin Docker local. Esto simplifica el setup (una sola base de datos, no dos) y evita depender de la virtualización de la laptop.
+
 ### 1.3 Stack técnico
 
 | Capa | Elección | Por qué |
@@ -69,7 +81,7 @@ Tras revisar el plan, se decidió incorporar al MVP (antes de pasar a producció
 | Generación de PDF | @react-pdf/renderer o Puppeteer | Contrato de préstamo descargable. |
 | Monitoreo de errores | Sentry (o logging integrado de Vercel) | Visibilidad de errores en producción antes de que los reporte un usuario. |
 | Hosting | Vercel | Despliegue automático desde GitHub. |
-| DB producción | Neon o Supabase (Postgres serverless) | Compatibles con Vercel, capa gratuita, con backups automáticos configurados. |
+| Base de datos (dev y producción) | Neon (Postgres serverless) | Compatible con Vercel, capa gratuita generosa, sin necesidad de Docker local (ver 1.2sexies). |
 
 ### 1.4 Roles y permisos
 
@@ -95,8 +107,11 @@ Guarantor (Aval)
   full_name, document_id, phone, address, created_at
 
 Loan (Préstamo)
-  id, client_id -> Client, principal_amount, interest_rate,
-  term_months, payment_frequency [semanal|quincenal|mensual],
+  id, client_id -> Client, type [interes_solo|cuota_fija],
+  principal_amount, outstanding_principal (saldo de capital pendiente;
+  fuente de verdad en interes_solo, ver sección 2.0),
+  interest_rate, term_months (referencial en interes_solo, ver 2.0),
+  payment_frequency [semanal|quincenal|mensual],
   start_date, status [activo|pagado|en_mora|cancelado|refinanciado],
   refinanced_from_loan_id -> Loan (nullable, referencia al préstamo original),
   assigned_collector_id -> User, created_by -> User, created_at
@@ -109,7 +124,9 @@ Installment (Cuota)
 
 Payment (Pago)
   id, installment_id -> Installment, loan_id -> Loan,
-  amount, payment_date, method [efectivo|transferencia|otro],
+  type [cuota|interes|abono_capital|cancelacion_total] (ver sección 2.0),
+  amount, interest_amount, principal_amount (desglose; 0 en cuota_fija),
+  payment_date, method [efectivo|transferencia|otro],
   registered_by -> User, notes,
   synced_from_offline (boolean, default false)
 
@@ -139,10 +156,27 @@ AuditLog (Log de auditoría)
 
 ## 2. Cómo debe funcionar
 
+### 2.0 Mecánica de repago: interés sobre saldo vs. cuota fija (28 de agosto de 2026)
+
+Lumen maneja dos formas de prestar y cobrar, seleccionables al crear el préstamo (campo `type`):
+
+- **Interés sobre saldo (`interes_solo`) — la que más se usa en la práctica.** El capital queda fijo mientras el préstamo esté abierto. Cada periodo (normalmente un mes) se cobra un interés (10% u otro % pactado) sobre el capital pendiente (`outstanding_principal`). Al llegar la fecha, el cliente tiene tres caminos:
+  1. **Pagar solo el interés:** el capital sigue igual y el próximo periodo se vuelve a cobrar el mismo interés sobre el mismo capital.
+  2. **Abonar parte del capital:** paga el interés del periodo más un monto extra que reduce `outstanding_principal`; el interés de los periodos siguientes se recalcula sobre el capital ya reducido.
+  3. **Cancelar todo:** paga el interés del periodo más todo el capital pendiente; el préstamo se cierra (`status = pagado`).
+
+  Las cuotas **no se generan todas de una vez**: se crea solo la primera al abrir el préstamo, y la siguiente se genera automáticamente recién cuando la anterior se resuelve — ya sea porque se pagó (interés, abono o cancelación) o porque venció sin pago (el job de mora la marca `atrasada` y genera igual la cuota del periodo siguiente, para que el interés se siga acumulando).
+
+  Si un cliente no paga nada en un periodo, ese interés queda como deuda pendiente (cuota `atrasada`) pero el capital **no cambia** y no se aplica una penalidad extra — simplemente el próximo periodo se le vuelve a cobrar el mismo interés sobre el mismo capital, más lo que ya debía.
+
+  El plazo pactado (`term_months`) es solo **referencial**: si se cumple y el cliente sigue prefiriendo pagar solo interés, no se fuerza el cierre automáticamente — se decide caso por caso entre el cobrador/administrador y el cliente. La ficha del préstamo muestra un aviso cuando esto ocurre.
+
+- **Cuota fija (`cuota_fija`) — el método clásico.** Se genera de una sola vez, al crear el préstamo, una tabla fija de cuotas a lo largo del plazo pactado, con el capital + interés simple repartidos en partes iguales (como ya funcionaba antes de esta decisión). Sigue disponible para los préstamos que se pacten así.
+
 - **Registrar cliente (alta rápida en dos pasos):** paso 1, desde el celular en campo, solo nombre, DNI y teléfono — lo mínimo para no hacer esperar al cliente. Paso 2 (cuando haya tiempo, en celular o laptop): dirección, ingresos declarados (opcional), aval/garante (opcional), documento adjunto (foto DNI) y selección opcional de quién lo refirió. El cliente queda operativo (se le puede crear un préstamo) desde el paso 1; el resto de campos se completan después sin bloquear el flujo.
-- **Crear préstamo:** monto, tasa, plazo, frecuencia, fecha inicio, cobrador asignado → se genera automáticamente la tabla de cuotas y el contrato en PDF descargable.
-- **Registrar pago:** desde la ficha del préstamo, sobre una cuota; pago completo → `pagada`, parcial → `parcial` con saldo restante. Todas pagadas → préstamo `pagado`. Se puede adjuntar comprobante de pago. Si se registra sin conexión desde la PWA, queda en cola local y se sincroniza automáticamente al recuperar señal (marcado con `synced_from_offline`).
-- **Mora:** job revisa cuotas vencidas con saldo pendiente → pasan a `atrasada`, se aplica interés moratorio configurable; el préstamo se marca `en_mora`.
+- **Crear préstamo:** monto, tasa, plazo, frecuencia, fecha inicio, cobrador asignado, y **tipo** (interés sobre saldo o cuota fija, ver 2.0) → según el tipo, se genera solo la primera cuota (interés sobre saldo) o toda la tabla de cuotas (cuota fija). El contrato en PDF descargable queda pendiente de implementar (ver "Próximos pasos").
+- **Registrar pago:** desde la agenda o la ficha del préstamo, sobre la cuota vigente. En cuota fija, funciona como antes (pago completo → `pagada`, parcial → `parcial`, todas pagadas → préstamo `pagado`). En interés sobre saldo, el cobrador indica qué decidió el cliente (solo interés / abona capital / cancela todo, ver 2.0) y el sistema calcula el reparto entre interés y capital, actualiza `outstanding_principal` y genera la siguiente cuota si el préstamo sigue abierto. Se puede adjuntar comprobante de pago. Si se registra sin conexión desde la PWA, queda en cola local y se sincroniza automáticamente al recuperar señal (marcado con `synced_from_offline`).
+- **Mora:** job diario revisa cuotas vencidas con saldo pendiente → pasan a `atrasada`; el préstamo se marca `en_mora`. En cuota fija se aplica interés moratorio configurable. En interés sobre saldo no hay penalidad extra (ver 2.0): el capital queda intacto y el job genera de una vez la cuota del siguiente periodo, para que el interés se siga acumulando mes a mes mientras no se pague.
 - **Recordatorio previo al vencimiento:** job diario identifica cuotas que vencen en 1–2 días y las marca para recordatorio; aparecen destacadas en la agenda para que el cobrador envíe el WhatsApp antes de que venzan (reduce mora), registrando `reminder_sent_at`.
 - **Refinanciamiento (esquema listo, flujo a definir):** un préstamo `en_mora` puede marcarse `refinanciado` y dar origen a un nuevo `Loan` con `refinanced_from_loan_id` apuntando al original.
 - **Referidos (Fase 2):** árbol de quién refirió a quién; bono opcional al completar el referido su primer pago/préstamo.
@@ -216,12 +250,47 @@ La app se puede instalar desde el navegador del celular (ícono en el home scree
 
 1. ~~Recuperar o volver a generar `lumen-datos-ejemplo.xlsx`~~ — resuelto: se reemplazó por un seed sintético (`prisma/seed.ts`) con datos equivalentes.
 2. ~~Implementar Fase 1: esquema Prisma completo + pantallas de clientes/préstamos, con alta de cliente en dos pasos y diseño mobile-first~~ — **hecho el 28 de agosto de 2026.** El proyecto Next.js se reconstruyó desde cero (el código anterior se había perdido) y está en `C:\Proyectos\Lumen` en la computadora del usuario: esquema Prisma completo, login con roles, layout mobile-first, agenda diaria con WhatsApp y registro de pago, alta de cliente en dos pasos, creación de préstamos con generación automática de cuotas, dashboard básico, reporte diario en Excel, job de mora, y PWA instalable con cola de pagos offline. Ver el `README.md` del proyecto para instrucciones de instalación local.
-3. Definir el texto exacto de la plantilla de mensaje de WhatsApp por defecto (hay un default razonable en `src/lib/whatsapp.ts`, falta que el negocio lo revise y, si se quiere, hacerlo editable desde la app).
-4. Pendiente para completar el MVP sobre este scaffold: subida real de documentos adjuntos (DNI, comprobantes) a Vercel Blob o S3, contrato de préstamo en PDF descargable, pruebas unitarias (Vitest) de amortización/mora/score.
+3. Definir el texto exacto de la plantilla de mensaje de WhatsApp por defecto — **primer borrador escrito el 29 de agosto de 2026** (ver sección siguiente): tono cálido, varias variantes por caso, firmado como "Lummen". Falta que el negocio lo revise y, si se quiere, hacerlo editable desde la app.
+4. ~~Pendiente para completar el MVP sobre este scaffold: subida real de documentos adjuntos (DNI, comprobantes) a Vercel Blob o S3, contrato de préstamo en PDF descargable, pruebas unitarias (Vitest) de amortización/mora/score~~ — **hecho el 29 de agosto de 2026** (ver sección siguiente). Queda pendiente probarlo con un `BLOB_READ_WRITE_TOKEN` real y con pruebas manuales end-to-end en pantalla.
 5. Configurar backups, monitoreo (Sentry) y seguridad de login antes de invitar usuarios reales (checklist ya documentado en la sección 4, sin código adicional pendiente más allá de las variables de entorno).
 6. Referidos, API oficial de WhatsApp y dashboard avanzado en fases siguientes.
 7. Evaluar en una fase posterior al MVP: firma digital del contrato en pantalla, geolocalización al registrar un pago, y tasas de interés/mora configurables por tipo de préstamo.
 8. **Diferido:** revisión de cumplimiento normativo (Ley 29733, topes de tasa de interés BCRP) antes de operar formalmente con clientes reales.
+
+### Repositorio en GitHub (28 de agosto de 2026)
+
+El código quedó subido en https://github.com/7ab0/lumen-app (rama `main`), para poder trabajarlo desde cualquier computadora. En la revisión rápida antes de subirlo se encontró y corrigió un bug real: `src/proxy.ts` (el middleware de autenticación) protegía sin querer `/api/jobs/mora`, el endpoint que llama el cron diario de Vercel sin cookie de sesión — lo habría redirigido a `/login` en vez de dejarlo correr. Ya está corregido (se excluyó `api/jobs` del matcher) antes del push.
+
+### Dos tipos de préstamo: interés sobre saldo y cuota fija (28 de agosto de 2026)
+
+Tras levantar el proyecto en la laptop con Neon, se aclaró cómo se prestan realmente los montos: capital fijo, interés mensual (10% u otro % pactado) sobre el saldo, y cada mes el cliente elige pagar solo interés (rueda otro mes) o cancelar todo (capital + interés). También se puede abonar parte del capital. Se agregó este tipo de préstamo (`interes_solo`) como el que más se usa, dejando el método de cuota fija original (`cuota_fija`) disponible como segunda opción — ver el detalle completo en la sección 2.0.
+
+Esto cambió el esquema de Prisma (`Loan.type`, `Loan.outstandingPrincipal`, `Payment.type/interestAmount/principalAmount`) y buena parte de la lógica de negocio (creación de préstamo, registro de pago, job de mora, dashboard, formularios). **Pendiente en la laptop:** correr `npx prisma migrate dev --name interes_sobre_saldo` para aplicar el cambio de esquema contra Neon, y `npx prisma db seed` de nuevo para regenerar los datos de ejemplo con la nueva mecánica.
+
+### Cobradora "Lummen" y tono de las plantillas de WhatsApp (29 de agosto de 2026)
+
+Se definió que la cobradora del seed se llama "Lummen" (`lummen@lumen.pe`, reemplaza al placeholder "Luis Torres" en `prisma/seed.ts`), y que los mensajes de WhatsApp (`src/lib/whatsapp.ts`) usan un tono cálido y cercano en vez de uno frío de cobranza, firmados como "Lummen". Hay 3 variantes por caso (atrasada / vence hoy / recordatorio próximo) elegidas al azar. Es un primer borrador — sigue pendiente que el negocio revise el texto exacto (punto 3 de "Próximos pasos").
+
+### Pruebas unitarias, subida de adjuntos y contrato en PDF (29 de agosto de 2026)
+
+Se agregó Vitest (`pnpm test`) con 31 pruebas para la lógica de negocio más delicada: `amortization.ts` (cuota fija, redondeo, interés sobre saldo), `score.ts` (umbrales A/B/C/D y mora activa, mockeando Prisma) y `whatsapp.ts` (que el mensaje siempre tenga las variables correctas pese a la selección aleatoria). Es un punto de partida — falta cubrir el job de mora (`api/jobs/mora`) y la agenda diaria (`lib/agenda.ts`), y sumar pruebas manuales end-to-end de los flujos completos.
+
+También se completaron las dos piezas que faltaban del MVP:
+
+- **Documentos adjuntos:** `server/actions/attachments.ts` sube el archivo a Vercel Blob y crea el `Attachment` en la base de datos; `components/attachments-panel.tsx` es el panel de subida + lista, usado tanto en la ficha del cliente (DNI, otros) como en el préstamo (contrato, comprobante de pago, otros). Requiere `BLOB_READ_WRITE_TOKEN` configurado — sin él, la subida falla con un mensaje claro en vez de romperse. **Pendiente probarlo con un token real.**
+- **Contrato de préstamo en PDF:** `lib/pdf/contrato.tsx` (con `@react-pdf/renderer`, ya era dependencia del proyecto) arma el documento con los datos del cliente, las condiciones del préstamo y, en cuota fija, la tabla de cuotas; se descarga desde `/api/prestamos/[id]/contrato`. Incluye un aviso explícito de que es una plantilla de trabajo pendiente de revisión legal (ver punto 8, cumplimiento normativo diferido) — no reemplaza la validación de un abogado.
+
+### Usuario de soporte (Gustavo, 29 de agosto de 2026)
+
+Se agregó un tercer usuario de staff en el seed para soporte: Gustavo
+(`soporte@lumen.pe`). El esquema solo tiene dos roles (`ADMIN` |
+`COBRADOR`, ver `schema.prisma`) — no existe un rol "soporte"
+independiente, así que "todos los privilegios" se resolvió con el rol
+`ADMIN` (el de mayor permiso del sistema: ve y gestiona todo, incluye
+dashboard y log de auditoría). Si más adelante se necesita un rol de
+soporte con permisos distintos a los de un Administrador dueño del
+negocio, hay que agregarlo como un tercer valor del enum `Role` — no es
+lo mismo pedirlo hoy.
 
 ### Nota sobre este scaffold (28 de agosto de 2026)
 
