@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { buildInstallmentPlan, buildInterestOnlyPlan } from "@/lib/amortization";
+import { buildInstallmentPlan, primeraCuotaInteresSolo } from "@/lib/amortization";
 
 const crearPrestamoSchema = z.object({
   clientId: z.string(),
@@ -26,14 +26,23 @@ export async function crearPrestamo(input: z.infer<typeof crearPrestamoSchema>) 
   if (!session?.user) throw new Error("No autenticado");
   const data = crearPrestamoSchema.parse(input);
 
-  const buildPlan = data.loanType === "INTERES_SOBRE_SALDO" ? buildInterestOnlyPlan : buildInstallmentPlan;
-  const plan = buildPlan({
-    principal: data.principalAmount,
-    interestRatePercentPerPeriod: data.interestRate,
-    termMonths: data.termMonths,
-    frequency: data.paymentFrequency,
-    startDate: data.startDate,
-  });
+  const plan =
+    data.loanType === "INTERES_SOBRE_SALDO"
+      ? [
+          primeraCuotaInteresSolo({
+            principal: data.principalAmount,
+            interestRatePercentPerPeriod: data.interestRate,
+            frequency: data.paymentFrequency,
+            startDate: data.startDate,
+          }),
+        ]
+      : buildInstallmentPlan({
+          principal: data.principalAmount,
+          interestRatePercentPerPeriod: data.interestRate,
+          termMonths: data.termMonths,
+          frequency: data.paymentFrequency,
+          startDate: data.startDate,
+        });
 
   const loan = await prisma.loan.create({
     data: {

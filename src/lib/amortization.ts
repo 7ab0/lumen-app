@@ -149,11 +149,11 @@ export function siguienteCuotaInteresSolo({
 export function plazoPactadoVencido({
   startDate,
   termMonths,
-  now,
+  now = new Date(),
 }: {
   startDate: Date;
   termMonths: number;
-  now: Date;
+  now?: Date;
 }): { vencido: boolean; fechaFinPactada: Date } {
   const fechaFinPactada = addMonths(startDate, termMonths);
   return { vencido: now > fechaFinPactada, fechaFinPactada };

@@ -18,7 +18,7 @@ const STATUS_VARIANT = {
 } as const;
 
 const TIPO_LABEL: Record<string, string> = {
-  INTERES_SOLO: "Interés sobre saldo",
+  INTERES_SOBRE_SALDO: "Interés sobre saldo",
   CUOTA_FIJA: "Cuota fija",
 };
 
@@ -41,7 +41,7 @@ export default async function LoanDetailPage({
 
   if (!loan) notFound();
 
-  const esInteresSolo = loan.type === "INTERES_SOLO";
+  const esInteresSolo = loan.loanType === "INTERES_SOBRE_SALDO";
   const totalDue = loan.installments.reduce((sum, i) => sum + Number(i.amountDue), 0);
   const totalPaid = loan.installments.reduce((sum, i) => sum + Number(i.amountPaid), 0);
   const { vencido: plazoVencido, fechaFinPactada } = plazoPactadoVencido({
@@ -57,7 +57,7 @@ export default async function LoanDetailPage({
         </Link>
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-bold text-slate-900">{formatCurrency(Number(loan.principalAmount))}</h1>
-          <Badge variant="default">{TIPO_LABEL[loan.type]}</Badge>
+          <Badge variant="default">{TIPO_LABEL[loan.loanType]}</Badge>
         </div>
         <p className="text-sm text-slate-500">
           Cobrador: {loan.assignedCollector.name} · Inicio: {formatDate(loan.startDate)}

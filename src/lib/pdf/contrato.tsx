@@ -59,7 +59,7 @@ const styles = StyleSheet.create({
 type ContratoProps = {
   loan: {
     id: string;
-    type: "INTERES_SOLO" | "CUOTA_FIJA";
+    loanType: "INTERES_SOBRE_SALDO" | "CUOTA_FIJA";
     principalAmount: number;
     interestRate: number;
     termMonths: number;
@@ -80,7 +80,7 @@ type ContratoProps = {
 export function ContratoPrestamo({ loan }: ContratoProps) {
   const clientName = `${loan.client.firstName} ${loan.client.lastName}`;
   const frecuencia = FREQUENCY_LABEL[loan.paymentFrequency];
-  const esInteresSolo = loan.type === "INTERES_SOLO";
+  const esInteresSolo = loan.loanType === "INTERES_SOBRE_SALDO";
 
   return (
     <Document>

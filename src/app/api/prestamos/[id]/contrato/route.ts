@@ -30,7 +30,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     ContratoPrestamo({
       loan: {
         id: loan.id,
-        type: loan.type,
+        loanType: loan.loanType,
         principalAmount: Number(loan.principalAmount),
         interestRate: Number(loan.interestRate),
         termMonths: loan.termMonths,
