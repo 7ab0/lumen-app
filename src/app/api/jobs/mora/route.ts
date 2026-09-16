@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { recalcularScore } from "@/lib/score";
+import { generarSiguienteCuotaInteresSoloSiNoExiste } from "@/lib/interes-solo";
 
 // Job diario de mora (ver plan, sección "Mora"): revisa cuotas vencidas
 // con saldo pendiente, las pasa a ATRASADA y marca el préstamo como
@@ -32,6 +33,15 @@ export async function GET(request: Request) {
     });
     affectedLoanIds.add(installment.loanId);
     affectedClientIds.add(installment.loan.clientId);
+
+    if (installment.loan.loanType === "INTERES_SOBRE_SALDO") {
+      await generarSiguienteCuotaInteresSoloSiNoExiste(
+        prisma,
+        installment.loan,
+        installment,
+        Number(installment.loan.outstandingPrincipal ?? 0)
+      );
+    }
   }
 
   for (const loanId of affectedLoanIds) {

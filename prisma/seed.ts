@@ -24,13 +24,24 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Sembrando datos de ejemplo...");
 
+  // A diferencia de los usuarios y clientes (upsert por email/documentId),
+  // los préstamos no tienen una clave de negocio natural para upsert, así
+  // que cada corrida los recrea desde cero: borra todo lo ligado a
+  // préstamos antes de sembrar, para que "npx prisma db seed" sea
+  // idempotente y no vaya acumulando préstamos duplicados en cada corrida.
+  await prisma.payment.deleteMany({});
+  await prisma.messageLog.deleteMany({ where: { loanId: { not: null } } });
+  await prisma.attachment.deleteMany({ where: { loanId: { not: null } } });
+  await prisma.installment.deleteMany({});
+  await prisma.loan.deleteMany({});
+
   const passwordHash = await bcrypt.hash("lumen1234", 10);
 
   const admin = await prisma.user.upsert({
     where: { email: "admin@lumen.pe" },
-    update: {},
+    update: { name: "Sayda Priscila (Admin)", passwordHash, role: "ADMIN" },
     create: {
-      name: "Ana Rojas (Admin)",
+      name: "Sayda Priscila (Admin)",
       email: "admin@lumen.pe",
       passwordHash,
       role: "ADMIN",
@@ -43,7 +54,7 @@ async function main() {
   // exacto más adelante, ver plan).
   const cobrador = await prisma.user.upsert({
     where: { email: "lummen@lumen.pe" },
-    update: {},
+    update: { name: "Lummen (Cobradora)", passwordHash, role: "COBRADOR" },
     create: {
       name: "Lummen (Cobradora)",
       email: "lummen@lumen.pe",
@@ -59,7 +70,7 @@ async function main() {
   // (ve y gestiona todo, incluye el dashboard y el log de auditoría).
   await prisma.user.upsert({
     where: { email: "soporte@lumen.pe" },
-    update: {},
+    update: { name: "Gustavo (Soporte)", passwordHash, role: "ADMIN" },
     create: {
       name: "Gustavo (Soporte)",
       email: "soporte@lumen.pe",

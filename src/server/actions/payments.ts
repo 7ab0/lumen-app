@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { recalcularScore } from "@/lib/score";
+import { generarSiguienteCuotaInteresSoloSiNoExiste } from "@/lib/interes-solo";
 
 const registrarPagoSchema = z.object({
   installmentId: z.string(),
@@ -87,6 +88,39 @@ export async function registrarPago(input: RegistrarPagoInput) {
       if (pendientes === 0) {
         await tx.loan.update({ where: { id: installment.loanId }, data: { status: "PAGADO" } });
       }
+    } else if (isFullyPaid) {
+      // Si se pagó más que el interés del periodo, el excedente es abono
+      // a capital (ver plan, sección 2.0: "solo interés" vs. "abona
+      // capital"). Si se pagó justo el interés, el capital no cambia.
+      const interesDeCuota = Number(installment.amountDue);
+      const abonoCapital = Math.max(0, Math.round((newAmountPaid - interesDeCuota) * 100) / 100);
+      const capitalActual = Number(installment.loan.outstandingPrincipal ?? 0);
+      const capitalNuevo = Math.round((capitalActual - abonoCapital) * 100) / 100;
+
+      if (abonoCapital > 0) {
+        await tx.loan.update({
+          where: { id: installment.loanId },
+          data: { outstandingPrincipal: capitalNuevo },
+        });
+      }
+
+      // Si esta cuota estaba atrasada y ya no quedan otras cuotas
+      // atrasadas, el préstamo vuelve a ACTIVO (ya no está en mora).
+      if (installment.loan.status === "EN_MORA") {
+        const otrasAtrasadas = await tx.installment.count({
+          where: { loanId: installment.loanId, status: "ATRASADA", id: { not: installment.id } },
+        });
+        if (otrasAtrasadas === 0) {
+          await tx.loan.update({ where: { id: installment.loanId }, data: { status: "ACTIVO" } });
+        }
+      }
+
+      await generarSiguienteCuotaInteresSoloSiNoExiste(
+        tx,
+        installment.loan,
+        installment,
+        abonoCapital > 0 ? capitalNuevo : capitalActual
+      );
     }
   });
 
